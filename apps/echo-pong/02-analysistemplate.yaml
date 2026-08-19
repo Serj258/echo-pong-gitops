@@ -1,0 +1,38 @@
+# Web metric provider: does a plain HTTP GET and evaluates a condition
+# against the response, no Prometheus/metrics backend required.
+#
+# jsonPath extracts a field from the JSON body into the `result` variable
+# used by successCondition. /health always returns
+# {"status":"healthy", ...} with a 200 whenever it can respond at all - it's
+# a liveness-style stub, not a deep dependency check - so the real signal
+# this gate provides is "can the app be reached and does it respond
+# correctly", which is exactly what you want as a promotion gate: if the
+# canary pods are crash-looping or unreachable, requests here fail/timeout
+# and the measurement errors out rather than succeeding.
+#
+# Caveat worth calling out explicitly: this hits the single shared
+# `echo-pong` Service (see 01-service.yaml), so during the canary phase a
+# sample could land on either a stable or canary pod - it is not a
+# canary-only check. Making it canary-only would mean adding a dedicated
+# canaryService in the Rollout strategy and pointing this at that Service's
+# DNS name instead.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: echo-pong-health-check
+  namespace: echo-pong
+spec:
+  metrics:
+    - name: health-check
+      # 3 samples, 10s apart: tolerates one transient blip without
+      # failing the gate outright, while still keeping the check well
+      # inside the 30s pause window each gate runs during.
+      interval: 10s
+      count: 3
+      successCondition: "result == 'healthy'"
+      failureLimit: 1
+      provider:
+        web:
+          url: "http://echo-pong.echo-pong.svc.cluster.local/health"
+          timeoutSeconds: 5
+          jsonPath: "{$.status}"

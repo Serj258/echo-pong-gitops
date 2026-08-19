@@ -1,0 +1,29 @@
+# Applied directly to the argocd namespace (kubectl apply -n argocd -f
+# this file) - not synced by another Application, this is the entry point.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: echo-pong
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Serj258/echo-pong-gitops.git
+    targetRevision: main
+    path: apps/echo-pong
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: echo-pong
+  syncPolicy:
+    automated:
+      selfHeal: true
+      # Requested was automated sync + self-heal; adding prune too since
+      # without it a resource deleted from git stays in the cluster
+      # forever, which defeats the point of GitOps (git as source of
+      # truth in both directions, not just "add").
+      prune: true
+    syncOptions:
+      # Namespace is one of our own tracked manifests (00-namespace.yaml),
+      # so we don't need ArgoCD to also auto-create it - avoids two things
+      # claiming ownership of the same object.
+      - CreateNamespace=false

@@ -1,0 +1,27 @@
+# ClusterIP, matching the app repo's existing convention - no direct
+# internet access, Ingress/Traefik is the only path in.
+#
+# Single shared Service, not a canaryService/stableService pair: this is
+# "basic canary" without a traffic-management plugin (no Istio/SMI/ALB
+# controller in this cluster). Argo Rollouts achieves the 20/50/100% split
+# purely by controlling how many canary vs. stable ReplicaSet pods exist -
+# both carry the `app: echo-pong` label, so this one Service's endpoints
+# list is a mix of both, and kube-proxy round-robins across them roughly
+# proportional to the pod counts. That's good enough for a weight-based
+# rollout; it's not exact traffic percentages the way a service-mesh
+# weighted route would give you.
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-pong
+  namespace: echo-pong
+  labels:
+    app: echo-pong
+spec:
+  type: ClusterIP
+  selector:
+    app: echo-pong
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

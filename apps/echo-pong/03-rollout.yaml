@@ -1,0 +1,138 @@
+# Argo Rollouts CRD, not a Deployment. Pod template is carried over from
+# the app repo's k8s/02-deployment.yaml (hardened: non-root, read-only
+# rootfs, dropped capabilities, fsGroup for the secret mount) - only the
+# top-level update strategy changes.
+#
+# replicas: 10 - chosen so 20%/50%/100% land on whole pods (2/5/10) with no
+# rounding. Argo Rollouts will round if the math doesn't divide evenly, but
+# picking a replica count that avoids that entirely removes a whole class
+# of "why did it promote 3 pods instead of 2.5" questions.
+#
+# Canary steps, in order:
+#   1. setWeight: 20   - shift ~20% of the shared Service's traffic to the
+#                         canary ReplicaSet (2 of 10 pods).
+#   2. pause: 30s       - bake time. Lets the new pods pass their readiness
+#                         probe and actually start receiving traffic before
+#                         anything judges them.
+#   3. analysis          - gate #1. Runs the health-check AnalysisTemplate
+#                         (3 samples over 30s). Must pass before the
+#                         Rollout is allowed to increase exposure further -
+#                         this is what makes it a gate rather than just a
+#                         timer.
+#   4. setWeight: 50   - only reached if gate #1 passed. Canary now gets
+#                         half the traffic (5 of 10 pods).
+#   5. pause: 30s       - second bake window at the higher exposure level.
+#   6. analysis          - gate #2, same template. Re-validates at 50%
+#                         before going fully live - catches failure modes
+#                         that only show up under more load/traffic than
+#                         20% exposed it to.
+#   7. setWeight: 100  - full promotion. No trailing pause/analysis: once
+#                         you're at 100% there's nothing left to gate
+#                         against, the canary *is* the new stable.
+#
+# If either analysis step fails (failureLimit: 1 exceeded), Argo Rollouts
+# aborts and scales the canary back to 0 automatically - no manual
+# rollback step needed.
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: echo-pong
+  namespace: echo-pong
+  labels:
+    app: echo-pong
+spec:
+  replicas: 10
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: echo-pong
+  strategy:
+    canary:
+      steps:
+        - setWeight: 20
+        - pause:
+            duration: 30s
+        - analysis:
+            templates:
+              - templateName: echo-pong-health-check
+        - setWeight: 50
+        - pause:
+            duration: 30s
+        - analysis:
+            templates:
+              - templateName: echo-pong-health-check
+        - setWeight: 100
+  template:
+    metadata:
+      labels:
+        app: echo-pong
+    spec:
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        fsGroup: 65532
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: echo-pong
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: echo-pong
+          image: ghcr.io/serj258/echo-pong:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: SECRET_FILE_PATH
+              value: /etc/echo-pong-secret/token
+          volumeMounts:
+            - name: secret
+              mountPath: /etc/echo-pong-secret
+              readOnly: true
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 12
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 20m
+              memory: 24Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: secret
+          secret:
+            secretName: echo-pong-token
+            defaultMode: 0440
