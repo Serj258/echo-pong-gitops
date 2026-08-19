@@ -11,6 +11,13 @@ spec:
     repoURL: https://github.com/Serj258/echo-pong-gitops.git
     targetRevision: main
     path: apps/echo-pong
+    # Explicit now that apps/echo-pong/kustomization.yaml exists (added for
+    # Argo CD Image Updater's git write-back - it can only target Helm
+    # values files, Kustomize image overrides, or a Plugin, not a plain
+    # directory of raw YAML). Auto-detection via the file's presence would
+    # work too; being explicit here avoids ambiguity for anyone reading
+    # this manifest without also knowing that.
+    kustomize: {}
   destination:
     server: https://kubernetes.default.svc
     namespace: echo-pong

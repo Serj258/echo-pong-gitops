@@ -1,0 +1,55 @@
+# argocd-image-updater v1.3.0's config model: a dedicated ImageUpdater CRD,
+# not the old annotation-on-Application style (that still exists via
+# useAnnotations: true per applicationRef, but since we're not relying on
+# it here there's nothing to add to echo-pong-application.yaml itself).
+#
+# Applied directly to the argocd namespace (kubectl apply -n argocd -f
+# this file), same as the Application manifest - both are bootstrap
+# objects, not synced by ArgoCD itself.
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: echo-pong
+  namespace: argocd
+spec:
+  applicationRefs:
+    - namePattern: echo-pong
+      images:
+        - alias: echo-pong
+          imageName: ghcr.io/serj258/echo-pong
+          commonUpdateSettings:
+            # "newest-build" sorts candidate tags by registry creation
+            # timestamp and picks the most recent - appropriate here
+            # since our tags are git SHAs (build-main.yml), not semver.
+            # It also means it's naturally scoped to whatever allowTags
+            # lets through below, so it can't accidentally jump to an
+            # older-but-differently-named tag.
+            updateStrategy: newest-build
+            # GHCR already carries semver tags (0.0.1, 0.0.1-test) and
+            # `latest` from release.yml's separate tag-triggered flow.
+            # Restricting to exactly-40-hex-char tags keeps this
+            # continuous-deploy path scoped to build-main.yml's SHA tags
+            # only, so it can never pick up a manually-pushed release tag
+            # or flip-flop between the two tag families.
+            allowTags: "regexp:^[0-9a-f]{40}$"
+          manifestTargets:
+            kustomize:
+              # Must match the image name as it appears in
+              # apps/echo-pong/03-rollout.yaml exactly (repo path, no
+              # tag) - this is the key the Kustomize `images:` transformer
+              # matches against to know which container to retag.
+              name: ghcr.io/serj258/echo-pong
+  writeBackConfig:
+    # git-creds Secret created imperatively in the argocd namespace -
+    # same "never committed to git" pattern as echo-pong-token. Contains
+    # a fine-grained GitHub PAT (Contents: Read & Write) scoped to only
+    # the echo-pong-gitops repo - not the broader `gh` CLI token, to keep
+    # blast radius minimal if this cluster is ever compromised.
+    method: "git:secret:git-creds"
+    gitConfig:
+      repository: "https://github.com/Serj258/echo-pong-gitops.git"
+      branch: main
+      # Bare "kustomization" (no path suffix) resolves to the same
+      # directory as the Application's source path - our kustomization.yaml
+      # lives right there, so this needs no override.
+      writeBackTarget: kustomization

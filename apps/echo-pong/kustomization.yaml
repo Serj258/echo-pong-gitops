@@ -1,0 +1,16 @@
+# Minimal Kustomize wrapper around otherwise-plain manifests. Not used for
+# any Kustomize feature (no patches, no name prefixing) - it exists purely
+# because Argo CD Image Updater's git write-back only knows how to target
+# Helm values files, Kustomize `images:` overrides, or a Plugin - a plain
+# Directory-type Application source has nowhere for it to write to. This
+# is the standard workaround: `kustomize build` on a resources-only file
+# produces the same output as applying the files directly: the `images:`
+# transformer Image Updater adds is the only thing that changes behavior,
+# and only once it actually writes one.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - 00-namespace.yaml
+  - 01-service.yaml
+  - 02-analysistemplate.yaml
+  - 03-rollout.yaml
