@@ -79,6 +79,19 @@ spec:
                   matchLabels:
                     app: echo-pong
                 topologyKey: kubernetes.io/hostname
+        # Prefer the workload node (node2, private subnet) over the
+        # control-plane node - keeps app-pod scheduling/CPU load off the
+        # node running etcd/apiserver/ArgoCD/Rollouts/Image Updater.
+        # "Preferred" not "required": if node2 is ever unavailable, pods
+        # still schedule on node1 rather than sitting Pending.
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: role
+                    operator: In
+                    values: ["workload"]
       containers:
         - name: echo-pong
           image: ghcr.io/serj258/echo-pong:latest
